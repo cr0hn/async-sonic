@@ -1,7 +1,7 @@
-"""Servidor Sonic falso: habla el protocolo real (CONNECTED / START / STARTED buffer(N)).
+"""Fake Sonic server: speaks the real protocol (CONNECTED / START / STARTED buffer(N)).
 
-Cada linea de comando tras START va a `handler(cmd, fake, writer)`; el handler contesta con
-`fake.say(writer, "...")` (anadiendo \\r\\n como Sonic) o cerrando `writer`.
+Every command line after START goes to `handler(cmd, fake, writer)`; the handler answers with
+`fake.say(writer, "...")` (appending \\r\\n like Sonic) or by closing `writer`.
 """
 
 import asyncio
@@ -14,12 +14,12 @@ class FakeSonic:
     def __init__(self, handler: Handler, *, password: str = "pw", buffer: int = 20000) -> None:
         self.handler, self.password, self.buffer = handler, password, buffer
         self.received: list[str] = []
-        self.modes: list[str] = []  # un elemento por conexion aceptada
+        self.modes: list[str] = []  # one item per accepted connection
         self.tasks: set[asyncio.Task[None]] = set()
         self.server: asyncio.Server | None = None
         self.port = 0
         self.greeting = "CONNECTED <sonic-server v1.9.1>"
-        self.started_suffix: str | None = None  # para forzar un STARTED raro
+        self.started_suffix: str | None = None  # to force an odd STARTED
 
     async def __aenter__(self) -> FakeSonic:
         self.server = await asyncio.start_server(self._serve, "127.0.0.1", 0)
@@ -53,7 +53,7 @@ class FakeSonic:
         await self.say(writer, self.greeting)
         start = (await reader.readline()).decode().split()
         if self.password != start[2] if len(start) > 2 else self.password != "":
-            await self.say(writer, "ENDED authentication_failed")  # como el Sonic real
+            await self.say(writer, "ENDED authentication_failed")  # like the real Sonic
             writer.close()
             return
         self.modes.append(start[1])

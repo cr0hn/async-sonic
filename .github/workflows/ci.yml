@@ -1,0 +1,31 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          python-version: "3.14"
+      - run: uv sync --locked
+      - run: uv run ruff check .
+      - run: uv run ruff format --check .
+      - run: uv run pyright
+      - name: Pre-pull the Sonic image
+        run: docker pull valeriansaliou/sonic:v1.9.1
+      - name: Tests (unit + integration against a real Sonic; nothing may be skipped)
+        run: |
+          uv run pytest -ra | tee pytest.log
+          if grep -Eq '[0-9]+ skipped' pytest.log; then
+            echo "::error::Tests were skipped; CI requires every test to run"
+            exit 1
+          fi

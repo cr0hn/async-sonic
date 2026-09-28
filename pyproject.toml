@@ -1,13 +1,30 @@
 [project]
 name = "async-sonic"
 version = "0.1.0"
-description = "Cliente asyncio de Sonic sin dependencias"
+description = "A zero-dependency, fully typed asyncio client for the Sonic search index, with connection pooling and pipelining."
 readme = "README.md"
 license = "MIT"
 license-files = ["LICENSE"]
 requires-python = ">=3.14"
 dependencies = []
-classifiers = ["Framework :: AsyncIO", "Typing :: Typed"]
+authors = [{ name = "Daniel Alfocea", email = "cr0hn@cr0hn.com" }]
+keywords = ["sonic", "sonic-search", "search", "asyncio", "async", "client", "pipelining", "connection-pool", "typed"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Framework :: AsyncIO",
+    "Intended Audience :: Developers",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.14",
+    "Topic :: Database :: Front-Ends",
+    "Topic :: Internet",
+    "Typing :: Typed",
+]
+
+[project.urls]
+Homepage = "https://github.com/cr0hn/async-sonic"
+Repository = "https://github.com/cr0hn/async-sonic"
+Issues = "https://github.com/cr0hn/async-sonic/issues"
 
 [dependency-groups]
 dev = ["pytest", "pytest-asyncio", "ruff", "pyright"]
@@ -26,9 +43,9 @@ target-version = "py314"
 [tool.ruff.lint]
 select = ["E", "F", "I", "B", "UP", "ASYNC", "RUF", "A"]
 ignore = [
-    "A002",  # `object` es el nombre que usa el protocolo
-    "E501",  # los docstrings llevan su ejemplo en una linea
-    "ASYNC109",  # `timeout` es un parametro de configuracion, no de asyncio.timeout
+    "A002",  # `object` is the name the protocol uses
+    "E501",  # docstrings carry their example on a single line
+    "ASYNC109",  # `timeout` is a configuration parameter, not an asyncio.timeout argument
 ]
 
 [tool.pyright]
@@ -40,4 +57,4 @@ pythonVersion = "3.14"
 asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"
 testpaths = ["tests"]
-markers = ["integration: necesita un Sonic real (docker)"]
+markers = ["integration: needs a real Sonic (docker)"]

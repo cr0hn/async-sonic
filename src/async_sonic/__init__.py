@@ -1,7 +1,7 @@
-"""Cliente asyncio de Sonic (https://github.com/valeriansaliou/sonic), sin dependencias.
+"""Asyncio client for Sonic (https://github.com/valeriansaliou/sonic), zero dependencies.
 
-Uso: ``async with Sonic("localhost", 1491, "password") as sonic: await sonic.query(...)``.
-Detalle completo en README.md y llms.txt.
+Usage: ``async with Sonic("localhost", 1491, "password") as sonic: await sonic.query(...)``.
+Full documentation in README.md and llms.txt.
 """
 
 from __future__ import annotations
@@ -23,55 +23,54 @@ __all__ = [
 
 
 class SonicError(Exception):
-    """Base de todos los errores de esta libreria."""
+    """Base class of every error raised by this library."""
 
 
 class SonicConnectionError(SonicError):
-    """No se pudo conectar, o la conexion se cayo o esta cerrada.
+    """Could not connect, or the connection dropped or is closed.
 
-    Los comandos en vuelo en esa conexion fallan con esto; el siguiente comando abre otra.
+    In-flight commands on that connection fail with this; the next command opens a new one.
     """
 
 
 class SonicTimeout(SonicConnectionError):
-    """Vencio `connect_timeout` (al conectar) o `timeout` (por comando)."""
+    """`connect_timeout` (while connecting) or `timeout` (per command) expired."""
 
 
 class SonicServerError(SonicError):
-    """Sonic contesto `ERR <codigo>(<detalle>)`. `.code` es el codigo, `.line` la linea entera."""
+    """Sonic answered `ERR <code>(<detail>)`. `.code` is the code, `.line` the whole line."""
 
     def __init__(self, line: str) -> None:
         match = re.match(r"ERR (\w+)", line)
         self.line = line
         self.code = match.group(1) if match else ""
         hint = _HINTS.get(self.code, "")
-        super().__init__(f"Sonic rechazo el comando: {line}" + (f". {hint}" if hint else ""))
+        super().__init__(f"Sonic rejected the command: {line}" + (f". {hint}" if hint else ""))
 
 
 class SonicProtocolError(SonicError):
-    """Sonic dijo algo que PROTOCOL.md no contempla (version incompatible?). La conexion se cierra."""
+    """Sonic said something PROTOCOL.md does not cover (incompatible version?). The connection is closed."""
 
 
 _HINTS = {
-    "authentication_failed": "Password incorrecto: usa `channel.auth_password` de sonic.cfg.",
-    "invalid_format": "Formato de comando invalido: si solo usas la API publica, es un bug de "
-    "async-sonic; abre un issue con el texto que enviaste.",
-    "policy_reject": "Valor fuera de los limites del servidor (limit/offset/texto): revisa "
-    "`[search]` y `[store]` en sonic.cfg.",
-    "unknown_command": "Esa version de Sonic no conoce el comando.",
-    "not_found": "Sonic no conoce ese recurso o accion (p. ej. trigger: consolidate, backup, restore).",
+    "authentication_failed": "Wrong password: use `channel.auth_password` from sonic.cfg.",
+    "invalid_format": "Invalid command format: if you only use the public API this is an "
+    "async-sonic bug; please open an issue with the text you sent.",
+    "policy_reject": "Value outside the server limits (limit/offset/text): check "
+    "`[search]` and `[store]` in sonic.cfg.",
+    "unknown_command": "This Sonic version does not know that command.",
+    "not_found": "Sonic does not know that resource or action (e.g. trigger: consolidate, backup, restore).",
 }
 _BUFFER = re.compile(r"buffer\((\d+)\)")
 _KV = re.compile(r"(\w+)\((-?\d+)\)")
 
 
 def quote(text: str) -> str:
-    """Texto entre comillas para PUSH/POP/QUERY/SUGGEST. Ej.: ``quote('di "hola"')``.
+    """Quote text for PUSH/POP/QUERY/SUGGEST. E.g. ``quote('say "hi"')``.
 
-    PROTOCOL.md solo exige `\\"` para las comillas; la barra invertida se duplica para que
-    una barra final no se coma la comilla de cierre. Los saltos de linea pasan a espacio:
-    un salto crudo terminaria el comando a medias (Sonic tokeniza por espacios, no se pierde
-    ninguna palabra).
+    PROTOCOL.md only requires `\\"` for quotes; the backslash is doubled so that a trailing
+    backslash cannot swallow the closing quote. Newlines become spaces: a raw newline would
+    end the command halfway (Sonic tokenizes on spaces, so no word is lost).
     """
     flat = text.replace("\r\n", " ").replace("\n", " ").replace("\r", " ")
     return '"' + flat.replace("\\", "\\\\").replace('"', '\\"') + '"'
@@ -80,8 +79,8 @@ def quote(text: str) -> str:
 def _token(value: str, what: str) -> str:
     if not value or any(c.isspace() or c == '"' or not c.isprintable() for c in value):
         raise ValueError(
-            f"{what} invalido {value!r}: no puede estar vacio ni llevar espacios, comillas "
-            "o caracteres de control. Usa un nombre corto como 'videos' o 'video:42'."
+            f"Invalid {what} {value!r}: it cannot be empty or contain whitespace, quotes or "
+            "control characters. Use a short name such as 'videos' or 'video:42'."
         )
     return value
 
@@ -94,7 +93,7 @@ def _opts(*, limit: int | None = None, offset: int | None = None, lang: str | No
         out += f" OFFSET({int(offset)})"
     if lang is not None:
         if not lang.isalpha():
-            raise ValueError(f"lang invalido {lang!r}: usa un codigo ISO 639-3 ('spa') o 'none'.")
+            raise ValueError(f"Invalid lang {lang!r}: use an ISO 639-3 code ('eng') or 'none'.")
         out += f" LANG({lang})"
     return out
 
@@ -108,19 +107,19 @@ def _settle(fut: asyncio.Future[str], value: str | Exception) -> None:
 
 
 class _Conn:
-    """Una conexion TCP en un modo, con un lector en segundo plano.
+    """One TCP connection in one mode, with a background reader.
 
-    Pipelining: cada comando se escribe sin esperar. Las respuestas inmediatas (OK, RESULT,
-    PONG, PENDING <id>, ERR) llegan en orden -> cola FIFO de futuros. Los `EVENT` de
-    QUERY/SUGGEST/LIST (PROTOCOL.md: pueden llegar desordenados) se casan por id.
-    Un comando que vence su timeout deja su hueco en la cola/tabla: la respuesta tardia se
-    descarta al llegar, asi la conexion nunca se desincroniza.
+    Pipelining: every command is written without waiting. Immediate replies (OK, RESULT,
+    PONG, PENDING <id>, ERR) arrive in order, so a FIFO of futures matches them. The `EVENT`
+    lines of QUERY/SUGGEST/LIST (PROTOCOL.md: they may arrive out of order) are matched by id.
+    A command whose timeout expires leaves its slot in the queue/table: the late reply is
+    discarded on arrival, so the connection never gets out of sync.
     """
 
     def __init__(self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
         self._reader, self._writer = reader, writer
         self.buffer = 0
-        self.load = 0  # llamadas activas, para elegir conexion
+        self.load = 0  # active calls, used to pick a connection
         self.timeout = 10.0
         self.gate: asyncio.Semaphore | None = None
         self._fifo: deque[tuple[asyncio.Future[str], str | None]] = deque()
@@ -149,27 +148,27 @@ class _Conn:
                     greeting = await conn._readline()
                     if not greeting.startswith("CONNECTED "):
                         raise SonicProtocolError(
-                            f"{where} no habla el protocolo de Sonic (saludo {greeting!r}): "
-                            "comprueba que el puerto es el de Sonic Channel (1491 por defecto)."
+                            f"{where} does not speak the Sonic protocol (greeting {greeting!r}): "
+                            "check that the port is the Sonic Channel one (1491 by default)."
                         )
                     writer.write(f"START {mode} {password}\n".encode())
                     started = await conn._readline()
                     match = _BUFFER.search(started)
                     if not started.startswith(f"STARTED {mode} ") or match is None:
-                        raise SonicProtocolError(f"respuesta a START inesperada: {started!r}")
+                        raise SonicProtocolError(f"Unexpected reply to START: {started!r}")
                     conn.buffer = int(match.group(1))
                 except BaseException:
                     writer.close()
                     raise
         except TimeoutError:
             raise SonicTimeout(
-                f"Timeout ({connect_timeout}s) al conectar con Sonic en {where}: comprueba "
-                "host/puerto o sube `connect_timeout`."
+                f"Timeout ({connect_timeout}s) connecting to Sonic at {where}: check "
+                "host/port or raise `connect_timeout`."
             ) from None
         except OSError as exc:
             raise SonicConnectionError(
-                f"No se pudo conectar con Sonic en {where} ({exc}): comprueba que Sonic esta "
-                "en marcha y que host y puerto son correctos."
+                f"Could not connect to Sonic at {where} ({exc}): check that Sonic is "
+                "running and that host and port are correct."
             ) from exc
         conn.timeout = timeout
         conn.gate = asyncio.Semaphore(max_in_flight) if max_in_flight else None
@@ -179,21 +178,21 @@ class _Conn:
     async def _readline(self) -> str:
         try:
             raw = await self._reader.readline()
-        except ValueError as exc:  # mas larga que `limit`
-            raise SonicProtocolError("Sonic envio una linea de mas de 1 MiB") from exc
+        except ValueError as exc:  # longer than `limit`
+            raise SonicProtocolError("Sonic sent a line longer than 1 MiB") from exc
         except OSError as exc:
-            raise SonicConnectionError(f"Se perdio la conexion con Sonic ({exc}).") from exc
+            raise SonicConnectionError(f"Lost the connection to Sonic ({exc}).") from exc
         if not raw.endswith(b"\n"):
             raise SonicConnectionError(
-                "Sonic cerro la conexion (reinicio, `tcp_timeout` o caida): el siguiente "
-                "comando abrira una conexion nueva."
+                "Sonic closed the connection (restart, `tcp_timeout` or crash): the next "
+                "command will open a new connection."
             )
         line = raw.decode(errors="replace").rstrip("\r\n")
         if line.startswith("ENDED authentication_failed") and self._task is None:
-            raise SonicServerError("ERR authentication_failed")  # asi contesta Sonic a START
+            raise SonicServerError("ERR authentication_failed")  # this is how Sonic answers START
         if line.startswith("ENDED "):
-            raise SonicConnectionError(f"Sonic termino la sesion ({line}).")
-        if line.startswith("ERR ") and self._task is None:  # durante el handshake
+            raise SonicConnectionError(f"Sonic ended the session ({line}).")
+        if line.startswith("ERR ") and self._task is None:  # during the handshake
             raise SonicServerError(line)
         return line
 
@@ -204,8 +203,8 @@ class _Conn:
                 self._dispatch(await self._readline())
         except SonicError as e:
             exc = e
-        except Exception as e:  # ponytail: lo inesperado tambien cierra la conexion
-            exc = SonicProtocolError(f"error interno leyendo de Sonic: {e!r}")
+        except Exception as e:  # ponytail: anything unexpected also closes the connection
+            exc = SonicProtocolError(f"Internal error while reading from Sonic: {e!r}")
         self._shutdown(exc)
 
     def _dispatch(self, line: str) -> None:
@@ -213,15 +212,15 @@ class _Conn:
             parts = line.split(" ", 3)
             entry = self._events.pop(parts[2], None) if len(parts) > 2 else None
             if entry is None:
-                raise SonicProtocolError(f"EVENT sin PENDING previo: {line!r}")
+                raise SonicProtocolError(f"EVENT without a previous PENDING: {line!r}")
             fut, name = entry
             if parts[1] != name:
-                _settle(fut, SonicProtocolError(f"se esperaba EVENT {name}, llego {line!r}"))
+                _settle(fut, SonicProtocolError(f"Expected EVENT {name}, got {line!r}"))
             else:
                 _settle(fut, parts[3] if len(parts) > 3 else "")
             return
         if not self._fifo:
-            raise SonicProtocolError(f"respuesta sin comando pendiente: {line!r}")
+            raise SonicProtocolError(f"Reply with no pending command: {line!r}")
         fut, event = self._fifo.popleft()
         if line.startswith("ERR "):
             _settle(fut, SonicServerError(line))
@@ -230,7 +229,7 @@ class _Conn:
         elif event is not None and line.startswith("PENDING "):
             self._events[line.removeprefix("PENDING ").strip()] = (fut, event)
         else:
-            _settle(fut, SonicProtocolError(f"respuesta inesperada: {line!r}"))
+            _settle(fut, SonicProtocolError(f"Unexpected reply: {line!r}"))
 
     def _shutdown(self, exc: Exception) -> None:
         self.closed = True
@@ -242,18 +241,18 @@ class _Conn:
             _settle(fut, exc)
 
     async def call(self, line: str, event: str | None = None) -> str:
-        """Un comando. Con `event`, devuelve lo que sigue a `EVENT <event> <id>`; sin el, la
-        primera linea de respuesta."""
+        """One command. With `event`, returns what follows `EVENT <event> <id>`; without it, the
+        first reply line."""
         if self.closed:
             raise SonicConnectionError(
-                "Conexion cerrada: abre un `async with Sonic(...)` nuevo, o vuelve a llamar "
-                "(el pool abre una conexion nueva)."
+                "Connection closed: open a new `async with Sonic(...)`, or call again "
+                "(the pool opens a new connection)."
             )
         data = line.encode() + b"\n"
         if len(data) > self.buffer:
             raise ValueError(
-                f"Comando de {len(data)} bytes; el buffer que anuncia Sonic es {self.buffer}. "
-                "Acorta el texto (PUSH lo trocea solo; QUERY/SUGGEST/POP no)."
+                f"Command of {len(data)} bytes; the buffer Sonic announces is {self.buffer}. "
+                "Shorten the text (PUSH splits it on its own; QUERY/SUGGEST/POP do not)."
             )
         self.load += 1
         try:
@@ -261,7 +260,9 @@ class _Conn:
                 await self.gate.acquire()
             try:
                 fut: asyncio.Future[str] = asyncio.get_running_loop().create_future()
-                self._fifo.append((fut, event))  # cola y escritura sin await en medio: mismo orden
+                self._fifo.append(
+                    (fut, event)
+                )  # queue and write with no await in between: same order
                 self._writer.write(data)
                 try:
                     async with asyncio.timeout(self.timeout):
@@ -269,11 +270,11 @@ class _Conn:
                         return await fut
                 except TimeoutError:
                     raise SonicTimeout(
-                        f"Sonic no contesto en {self.timeout}s a {line[:40]!r}: sube `timeout=` "
-                        "o revisa la carga del servidor. La conexion sigue usable."
+                        f"Sonic did not answer {line[:40]!r} within {self.timeout}s: raise `timeout=` "
+                        "or check the server load. The connection is still usable."
                     ) from None
                 except OSError as exc:
-                    raise SonicConnectionError(f"Se perdio la conexion con Sonic ({exc}).") from exc
+                    raise SonicConnectionError(f"Lost the connection to Sonic ({exc}).") from exc
                 finally:
                     fut.cancel()
             finally:
@@ -288,16 +289,16 @@ class _Conn:
         self._writer.write(b"QUIT\n")
         try:
             async with asyncio.timeout(timeout):
-                await self._task  # el servidor contesta ENDED y cierra
+                await self._task  # the server answers ENDED and closes
         except TimeoutError, OSError:
             pass
         finally:
             self._task.cancel()
-            self._shutdown(SonicConnectionError("Conexion cerrada por el cliente."))
+            self._shutdown(SonicConnectionError("Connection closed by the client."))
 
 
 class _Pool:
-    """Hasta `size` conexiones de un modo, abiertas cuando hacen falta. Elige la menos cargada."""
+    """Up to `pool_size` connections of one mode, opened on demand. Picks the least loaded."""
 
     def __init__(self, mode: str, sonic: Sonic) -> None:
         self.mode, self.sonic = mode, sonic
@@ -340,34 +341,34 @@ class _Pool:
 
 def _ok(reply: str) -> None:
     if reply != "OK":
-        raise SonicProtocolError(f"se esperaba OK, llego {reply!r}")
+        raise SonicProtocolError(f"Expected OK, got {reply!r}")
 
 
 def _result(reply: str) -> str:
     if not reply.startswith("RESULT "):
-        raise SonicProtocolError(f"se esperaba RESULT, llego {reply!r}")
+        raise SonicProtocolError(f"Expected RESULT, got {reply!r}")
     return reply.removeprefix("RESULT ")
 
 
 def _int(reply: str) -> int:
     text = _result(reply)
     if not text.isdecimal():
-        raise SonicProtocolError(f"se esperaba un entero, llego {reply!r}")
+        raise SonicProtocolError(f"Expected an integer, got {reply!r}")
     return int(text)
 
 
 def _split(escaped: str, room: int) -> list[str]:
-    """Trocea por espacios en pedazos de <= room bytes UTF-8 (el escapado no crea espacios)."""
+    """Split on spaces into chunks of <= room UTF-8 bytes (escaping never creates spaces)."""
     if room < 1:
-        raise ValueError("el buffer que anuncia Sonic no deja sitio para el texto")
+        raise ValueError("The buffer Sonic announces leaves no room for the text")
     chunks: list[str] = []
     cur = ""
     for word in escaped.split(" "):
         size = len(word.encode())
         if size > room:
             raise ValueError(
-                f"Una palabra de {size} bytes no cabe en el buffer de Sonic ({room} utiles): "
-                "acortala o quitala antes de indexar."
+                f"A {size}-byte word does not fit in the Sonic buffer ({room} usable): "
+                "shorten or remove it before indexing."
             )
         joined = f"{cur} {word}" if cur else word
         if len(joined.encode()) <= room:
@@ -380,17 +381,17 @@ def _split(escaped: str, room: int) -> list[str]:
 
 
 class Sonic:
-    """Cliente de Sonic. Todo son metodos planos; el modo (search/ingest/control), el
-    handshake y el pool de conexiones son cosa de la clase.
+    """Sonic client. Everything is a flat method; the mode (search/ingest/control), the
+    handshake and the connection pool are handled by the class.
 
     >>> async with Sonic("localhost", 1491, "SecretPassword") as sonic:  # doctest: +SKIP
-    ...     await sonic.push("videos", "catalogo", "video:1", "gatos y perros", lang="spa")
+    ...     await sonic.push("videos", "catalog", "video:1", "cats and dogs", lang="eng")
 
-    Conexiones: abiertas al primer uso, hasta `pool_size` por canal, con pipelining (cada
-    conexion admite `max_in_flight` comandos a la vez; `None` = sin tope). Sin reintentos: si
-    una conexion se cae, sus comandos en vuelo fallan con `SonicConnectionError` y el
-    siguiente comando abre una conexion nueva. `timeout` es por comando; vencerlo lanza
-    `SonicTimeout` pero la conexion sigue viva.
+    Connections: opened on first use, up to `pool_size` per channel, with pipelining (each
+    connection allows `max_in_flight` simultaneous commands; `None` = unlimited). No retries:
+    if a connection drops, its in-flight commands fail with `SonicConnectionError` and the
+    next command opens a new connection. `timeout` is per command; when it expires
+    `SonicTimeout` is raised but the connection stays alive.
     """
 
     def __init__(
@@ -419,10 +420,10 @@ class Sonic:
         await self.close()
 
     async def close(self) -> None:
-        """Cierra todas las conexiones (QUIT). Ej.: ``await sonic.close()``. Nunca lanza."""
+        """Close every connection (QUIT). E.g. ``await sonic.close()``. Never raises."""
         await asyncio.gather(self._search.close(), self._ingest.close(), self._control.close())
 
-    # -- busqueda ---------------------------------------------------------------------
+    # -- search ---------------------------------------------------------------------
 
     async def query(
         self,
@@ -434,7 +435,7 @@ class Sonic:
         offset: int | None = None,
         lang: str | None = None,
     ) -> list[str]:
-        """Ids de objeto que casan con `terms`, mejor primero. Ej.: ``await sonic.query("videos", "catalogo", "gatos", limit=10)``."""
+        """Object ids matching `terms`, best first. E.g. ``await sonic.query("videos", "catalog", "cats", limit=10)``."""
         line = (
             f"QUERY {_token(collection, 'collection')} {_token(bucket, 'bucket')} {quote(terms)}"
             + _opts(limit=limit, offset=offset, lang=lang)
@@ -444,7 +445,7 @@ class Sonic:
     async def suggest(
         self, collection: str, bucket: str, word: str, *, limit: int | None = None
     ) -> list[str]:
-        """Palabras que completan `word`. Ej.: ``await sonic.suggest("videos", "catalogo", "gat")``."""
+        """Words that complete `word`. E.g. ``await sonic.suggest("videos", "catalog", "ca")``."""
         line = (
             f"SUGGEST {_token(collection, 'collection')} {_token(bucket, 'bucket')} {quote(word)}"
             + _opts(limit=limit)
@@ -454,28 +455,28 @@ class Sonic:
     async def list_words(
         self, collection: str, bucket: str, *, limit: int | None = None, offset: int | None = None
     ) -> list[str]:
-        """Palabras indexadas del bucket (LIST enumera palabras, no objetos). Ej.: ``await sonic.list_words("videos", "catalogo", limit=50)``."""
+        """Indexed words of the bucket (LIST enumerates words, not objects). E.g. ``await sonic.list_words("videos", "catalog", limit=50)``."""
         line = f"LIST {_token(collection, 'collection')} {_token(bucket, 'bucket')}" + _opts(
             limit=limit, offset=offset
         )
         return (await self._search.call(line, "LIST")).split()
 
-    # -- ingesta ----------------------------------------------------------------------
+    # -- ingest ----------------------------------------------------------------------
 
     async def push(
         self, collection: str, bucket: str, object: str, text: str, *, lang: str | None = None
     ) -> None:
-        """Indexa `text` para `object`. Si no cabe en el buffer de Sonic, se trocea por palabras. Ej.: ``await sonic.push("videos", "catalogo", "video:1", "gatos y perros", lang="spa")``."""
+        """Index `text` for `object`. If it does not fit in the Sonic buffer it is split on words. E.g. ``await sonic.push("videos", "catalog", "video:1", "cats and dogs", lang="eng")``."""
         head = f"PUSH {_token(collection, 'collection')} {_token(bucket, 'bucket')} "
         head += f"{_token(object, 'object')} "
         tail = _opts(lang=lang)
         conn = await self._ingest.get()
-        room = conn.buffer - len((head + tail).encode()) - 3  # 2 comillas + salto de linea
+        room = conn.buffer - len((head + tail).encode()) - 3  # 2 quotes + newline
         for chunk in _split(quote(text)[1:-1], room):
             _ok(await conn.call(f'{head}"{chunk}"{tail}'))
 
     async def pop(self, collection: str, bucket: str, object: str, text: str) -> int:
-        """Quita las palabras de `text` del objeto; devuelve cuantas. Ej.: ``await sonic.pop("videos", "catalogo", "video:1", "gatos")``."""
+        """Remove the words of `text` from the object; returns how many. E.g. ``await sonic.pop("videos", "catalog", "video:1", "cats")``."""
         line = (
             f"POP {_token(collection, 'collection')} {_token(bucket, 'bucket')} "
             f"{_token(object, 'object')} {quote(text)}"
@@ -485,14 +486,14 @@ class Sonic:
     async def count(
         self, collection: str, bucket: str | None = None, object: str | None = None
     ) -> int:
-        """Buckets de la coleccion, objetos del bucket o terminos del objeto. Ej.: ``await sonic.count("videos", "catalogo")``.
+        """Buckets of the collection, objects of the bucket or terms of the object. E.g. ``await sonic.count("videos", "catalog")``.
 
-        Usa `COUNT`, no `COUNTC/B/O`: PROTOCOL.md los lista pero Sonic v1.9.1 contesta
-        `ERR unknown_command`. Ojo: en v1.9.1 `count(col, bucket)` devuelve palabras distintas,
-        no objetos.
+        Uses `COUNT`, not `COUNTC/B/O`: PROTOCOL.md lists them but Sonic v1.9.1 answers
+        `ERR unknown_command`. Note: on v1.9.1 `count(collection, bucket)` returns distinct
+        words, not objects.
         """
         if bucket is None and object is not None:
-            raise ValueError("count: `object` requiere `bucket`.")
+            raise ValueError("count: `object` requires `bucket`.")
         parts = [_token(collection, "collection")]
         if bucket is not None:
             parts.append(_token(bucket, "bucket"))
@@ -501,16 +502,16 @@ class Sonic:
         return _int(await self._ingest.call("COUNT " + " ".join(parts)))
 
     async def flush_collection(self, collection: str) -> int:
-        """Borra toda la coleccion; devuelve cuantos elementos. Ej.: ``await sonic.flush_collection("videos")``."""
+        """Delete the whole collection; returns how many items. E.g. ``await sonic.flush_collection("videos")``."""
         return _int(await self._ingest.call(f"FLUSHC {_token(collection, 'collection')}"))
 
     async def flush_bucket(self, collection: str, bucket: str) -> int:
-        """Borra un bucket. Ej.: ``await sonic.flush_bucket("videos", "catalogo")``."""
+        """Delete a bucket. E.g. ``await sonic.flush_bucket("videos", "catalog")``."""
         line = f"FLUSHB {_token(collection, 'collection')} {_token(bucket, 'bucket')}"
         return _int(await self._ingest.call(line))
 
     async def flush_object(self, collection: str, bucket: str, object: str) -> int:
-        """Borra un objeto (no limpia SUGGEST). Ej.: ``await sonic.flush_object("videos", "catalogo", "video:1")``."""
+        """Delete an object (does not clean SUGGEST). E.g. ``await sonic.flush_object("videos", "catalog", "video:1")``."""
         line = (
             f"FLUSHO {_token(collection, 'collection')} {_token(bucket, 'bucket')} "
             f"{_token(object, 'object')}"
@@ -520,9 +521,9 @@ class Sonic:
     # -- control ----------------------------------------------------------------------
 
     async def trigger(self, action: str | None = None, data: str | None = None) -> str:
-        """`TRIGGER [action] [data]`; acciones: consolidate, backup, restore. Devuelve el resultado ("" si Sonic contesta OK; sin accion, la lista de acciones). Ej.: ``await sonic.trigger("consolidate")``."""
+        """`TRIGGER [action] [data]`; actions: consolidate, backup, restore. Returns the result ("" if Sonic answers OK; with no action, the list of actions). E.g. ``await sonic.trigger("consolidate")``."""
         if action is None and data is not None:
-            raise ValueError("trigger: `data` requiere `action`.")
+            raise ValueError("trigger: `data` requires `action`.")
         line = "TRIGGER"
         if action is not None:
             line += " " + _token(action, "action")
@@ -532,16 +533,16 @@ class Sonic:
         return "" if reply == "OK" else _result(reply)
 
     async def info(self) -> dict[str, int]:
-        """Metricas del servidor (`uptime`, `clients_connected`...). Ej.: ``(await sonic.info())["uptime"]``."""
+        """Server metrics (`uptime`, `clients_connected`...). E.g. ``(await sonic.info())["uptime"]``."""
         return {k: int(v) for k, v in _KV.findall(_result(await self._control.call("INFO")))}
 
     async def ping(self) -> None:
-        """Comprueba que Sonic responde (lanza si no). Ej.: ``await sonic.ping()``."""
+        """Check that Sonic answers (raises otherwise). E.g. ``await sonic.ping()``."""
         reply = await self._control.call("PING")
         if reply != "PONG":
-            raise SonicProtocolError(f"se esperaba PONG, llego {reply!r}")
+            raise SonicProtocolError(f"Expected PONG, got {reply!r}")
 
     async def help(self, manual: str | None = None) -> str:
-        """`HELP [manual]` tal cual. Ej.: ``await sonic.help("commands")``."""
+        """`HELP [manual]` as is. E.g. ``await sonic.help("commands")``."""
         line = "HELP" if manual is None else f"HELP {_token(manual, 'manual')}"
         return _result(await self._control.call(line))

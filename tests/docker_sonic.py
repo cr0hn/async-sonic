@@ -1,5 +1,5 @@
-"""Levanta `valeriansaliou/sonic` en docker con tests/sonic.cfg. Lo usan los tests de
-integracion y benchmarks/bench.py."""
+"""Start `valeriansaliou/sonic` in docker with tests/sonic.cfg. Used by the integration
+tests and by benchmarks/bench.py."""
 
 import contextlib
 import shutil
@@ -14,7 +14,7 @@ PASSWORD = "SecretPassword"
 CFG = Path(__file__).parent / "sonic.cfg"
 
 
-def docker_disponible() -> bool:
+def docker_available() -> bool:
     if shutil.which("docker") is None:
         return False
     return subprocess.run(["docker", "info"], capture_output=True).returncode == 0
@@ -44,7 +44,7 @@ def sonic_container() -> Generator[tuple[str, int]]:
         )
         port = int(out.stdout.splitlines()[0].rsplit(":", 1)[1])
         deadline = time.time() + 30
-        while True:  # esperar a que conteste el saludo, no solo a que el puerto abra
+        while True:  # wait for the greeting, not just for the port to open
             try:
                 with socket.create_connection(("127.0.0.1", port), timeout=1) as s:
                     if s.recv(64).startswith(b"CONNECTED"):
@@ -52,7 +52,7 @@ def sonic_container() -> Generator[tuple[str, int]]:
             except OSError:
                 pass
             if time.time() > deadline:
-                raise RuntimeError("Sonic no arranco en 30 s")
+                raise RuntimeError("Sonic did not start within 30 s")
             time.sleep(0.2)
         yield "127.0.0.1", port
     finally:
