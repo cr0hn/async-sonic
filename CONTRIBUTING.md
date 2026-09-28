@@ -41,6 +41,19 @@ If you change the public API, update `README.md` and `llms.txt` in the same pull
 Use [Conventional Commits](https://www.conventionalcommits.org/) (`feat:`, `fix:`, `docs:`, `test:`,
 `chore:`...). There is no `CHANGELOG.md`: the git history is the changelog.
 
+## Releasing (maintainers)
+
+Publishing uses PyPI Trusted Publishing (OIDC); there are no tokens in the repository secrets.
+One-time setup: on PyPI, add a trusted publisher for this repository, workflow `publish.yml`,
+environment `pypi`.
+
+1. Bump `version` in `pyproject.toml` and merge it to `main` with CI green.
+2. Tag it: `git tag vX.Y.Z && git push origin vX.Y.Z`.
+3. Publish a GitHub Release for that tag. The `Publish` workflow re-runs ruff, pyright and the full
+   test suite against a real Sonic, builds, runs `twine check` and uploads to PyPI.
+
+The workflow can also be started manually (`workflow_dispatch`) from the Actions tab.
+
 ## Reporting bugs and security issues
 
 Use the issue templates. For vulnerabilities, follow [SECURITY.md](SECURITY.md) instead of opening a
