@@ -1,0 +1,69 @@
+# async-sonic
+
+> Cliente asyncio de Sonic (buscador de ids, https://github.com/valeriansaliou/sonic). Python >=3.14, sin dependencias. Un modulo: `async_sonic`.
+
+## Uso minimo
+
+```python
+import asyncio
+from async_sonic import Sonic
+
+async def main() -> None:
+    async with Sonic("localhost", 1491, "SecretPassword") as sonic:
+        await sonic.push("videos", "catalogo", "video:1", "gatos y perros", lang="spa")
+        print(await sonic.query("videos", "catalogo", "gatos", lang="spa"))  # ['video:1']
+
+asyncio.run(main())
+```
+
+## Modelo mental
+
+- Sonic indexa TEXTO contra un id de objeto; `query` devuelve ids, nunca texto.
+- Jerarquia: `collection` > `bucket` > `object`. Con un solo indice usa un bucket fijo ("default").
+- Todo es `await`. No hay canales, handshake ni pool que gestionar: `Sonic` los abre solo.
+- `push` y `query` deben usar el mismo `lang` ("spa", "eng"... o "none"); sin `lang` Sonic lo adivina.
+- `suggest` y `list_words` leen un grafo que solo se actualiza tras `await sonic.trigger("consolidate")`.
+- No hay UPDATE: para cambiar un objeto, `flush_object` y luego `push`.
+
+## API (todo en `Sonic`)
+
+Sonic(host="localhost", port=1491, password="", *, pool_size=4, max_in_flight=None, timeout=10.0, connect_timeout=5.0)
+  async with Sonic(...) as sonic  |  await sonic.close()
+
+Busqueda:
+  await sonic.query(collection, bucket, terms, *, limit=None, offset=None, lang=None) -> list[str]   # ids
+  await sonic.suggest(collection, bucket, word, *, limit=None) -> list[str]                          # autocompletado
+  await sonic.list_words(collection, bucket, *, limit=None, offset=None) -> list[str]                # palabras indexadas
+
+Ingesta:
+  await sonic.push(collection, bucket, object, text, *, lang=None) -> None   # trocea solo si excede el buffer
+  await sonic.pop(collection, bucket, object, text) -> int                   # quita esas palabras del objeto
+  await sonic.count(collection, bucket=None, object=None) -> int             # v1.9.1: (col,bucket) = palabras distintas
+  await sonic.flush_collection(collection) -> int
+  await sonic.flush_bucket(collection, bucket) -> int
+  await sonic.flush_object(collection, bucket, object) -> int                # no limpia SUGGEST
+
+Control:
+  await sonic.trigger("consolidate") -> ""        # tambien "backup"/"restore" con data=<ruta>; trigger() lista acciones
+  await sonic.info() -> dict[str, int]            # uptime, clients_connected, commands_total...
+  await sonic.ping() -> None
+  await sonic.help(manual=None) -> str
+
+Extra: quote(text) -> str   # el escapado que usan query/push/pop/suggest
+
+## Errores (todos heredan de SonicError; el mensaje dice que hacer)
+
+- SonicConnectionError: no conecta / conexion caida o cerrada. El SIGUIENTE comando abre conexion nueva; no hay reintentos automaticos.
+- SonicTimeout (hija de la anterior): vencio connect_timeout o timeout; la conexion sigue viva.
+- SonicServerError: Sonic contesto ERR. `.code` p. ej. "authentication_failed", "policy_reject", "not_found"; `.line` entera.
+- SonicProtocolError: respuesta fuera de PROTOCOL.md; la conexion se cierra.
+- ValueError: argumento invalido (espacios/comillas/vacio en collection, bucket, object; lang no alfabetico) o comando que
+  no cabe en el buffer. Nunca sale al servidor.
+
+## Limites y reglas
+
+- Buffer de linea: el que anuncia Sonic (20000 bytes por defecto). push trocea por palabras; query/suggest/pop lanzan ValueError.
+- Escapado: `"` -> `\"`, `\` -> `\\`, saltos de linea -> espacio. Unicode tal cual.
+- Concurrencia: lanza muchas corrutinas con asyncio.gather sobre el mismo `Sonic`; hay pipelining y pool (pool_size).
+  `max_in_flight=1` desactiva el pipelining.
+- Sonic v1.9.1 probado; COUNTC/COUNTB/COUNTO no existen alli (se usa COUNT).
